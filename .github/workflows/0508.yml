@@ -1,0 +1,26 @@
+name: Auto Signup Task
+
+on:
+  workflow_dispatch: # 允许你手动点击按钮运行
+  push:
+    branches: [ main ]
+
+jobs:
+  run-automation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install playwright
+          npx playwright install chromium --with-deps
+
+      - name: Run script
+        run: node script.js
