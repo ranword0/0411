@@ -1,12 +1,4 @@
-name: Auto Signup Task
 
-on:
-  workflow_dispatch: # 允许你手动点击按钮运行
-  push:
-    branches: [ main ]
-
-jobs:
-  run-automation:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
