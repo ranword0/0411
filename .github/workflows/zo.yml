@@ -3,7 +3,7 @@ name: Auto Signup Task2
 on:
   schedule:
     # 每周六 UTC 22:00 触发（北京时间周日 06:00）
-    - cron: '*/52 * * * *'
+    - cron: '*/12 * * * *'
   workflow_dispatch: # 允许手动触发
   push:
     branches: [ main ]
