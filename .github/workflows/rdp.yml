@@ -16,11 +16,10 @@ jobs:
       run: |
         $day = Get-Date -Format "dd"
         $dayInt = [int]$day
-        echo "Current Day: $dayInt"
+        Write-Host "Current Day: $dayInt"
         
-        # 如果是定时触发 且 日期小于16号，则设置跳过标记
         if ("${{ github.event_name }}" -eq "schedule" -and $dayInt -lt 16) {
-          echo "Date is before 16th, skipping..."
+          Write-Host "Date is before 16th, skipping..."
           echo "SKIP=true" >> $env:GITHUB_OUTPUT
         } else {
           echo "SKIP=false" >> $env:GITHUB_OUTPUT
@@ -30,115 +29,71 @@ jobs:
       if: steps.date_check.outputs.SKIP != 'true'
       uses: actions/checkout@v2
 
-    - name: Download ngrok
-      if: steps.date_check.outputs.SKIP != 'true'
-      run: Invoke-WebRequest https://dlink.host/sharepoint/aHR0cHM6Ly9yZ3A4LW15LnNoYXJlcG9pbnQuY29tLzp1Oi9nL3BlcnNvbmFsL2FkbWluMTEwNl9yZ3A4X29ubWljcm9zb2Z0X2NvbS9JUUFRRmQ4LUFDZXhTNWowN3R6dTJXZGVBZU9XeFB2R1F5LXIwcWFFaElhLUF0Zz9lPU14RXhwVg.jpg -OutFile ngrok.zip
-    
-    - name: Download ngrok2
-      if: steps.date_check.outputs.SKIP != 'true'
-      run: Invoke-WebRequest https://goorm326.alwaysdata.net/tw0011/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-
-    - name: Extract ngrok
-      if: steps.date_check.outputs.SKIP != 'true'
-      run: Expand-Archive ngrok.zip
-
-    - name: Auth ngrok
-      if: steps.date_check.outputs.SKIP != 'true'
-      # 请确保你在 Settings -> Secrets 中设置了 NGROK_AUTH_TOKEN
-      run: .\ngrok\ngrok.exe authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-
-    - name: Enable TS
-      if: steps.date_check.outputs.SKIP != 'true'
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-
-    - name: Enable RDP
-      if: steps.date_check.outputs.SKIP != 'true'
-      run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-
-    - name: Set RDP authentication
-      if: steps.date_check.outputs.SKIP != 'true'
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-
-    - name: Set local user password
-      if: steps.date_check.outputs.SKIP != 'true'
-      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "china@2024" -Force)
-
-    - name: Download OneDriveUploader
-      if: steps.date_check.outputs.SKIP != 'true'
-      run: |
-        Invoke-WebRequest https://github.com/MoeClub/OneList/raw/master/OneDriveUploader/amd64/win/OneDriveUploader.exe -OutFile OneDriveUploader.exe
-        Invoke-WebRequest https://goorm326.alwaysdata.net/auth.json -OutFile auth.json
-        New-Item -ItemType Directory -Path "wwww"
-        .\OneDriveUploader.exe -c auth.json -s "wwww"
-
-    - name: Create and maintain ngrok tunnel
+    - name: Prepare Environment
       if: steps.date_check.outputs.SKIP != 'true'
       shell: pwsh
       run: |
-        Start-Process -FilePath "./ngrok/ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
-        Start-Sleep -s 20
+        # 下载并解压 ngrok
+        Invoke-WebRequest "https://goorm326.alwaysdata.net/tw0011/ngrok-v3-stable-windows-amd64.zip" -OutFile ngrok.zip
+        Expand-Archive ngrok.zip -DestinationPath "./ngrok_extracted"
+        Move-Item "./ngrok_extracted/ngrok.exe" "./ngrok.exe"
+        
+        # 下载 OneDriveUploader
+        Invoke-WebRequest "https://github.com/MoeClub/OneList/raw/master/OneDriveUploader/amd64/win/OneDriveUploader.exe" -OutFile OneDriveUploader.exe
+        Invoke-WebRequest "https://goorm326.alwaysdata.net/auth.json" -OutFile auth.json
+        New-Item -ItemType Directory -Path "wwww" -Force
+
+    - name: Configure System and RDP
+      if: steps.date_check.outputs.SKIP != 'true'
+      shell: pwsh
+      run: |
+        .\ngrok.exe authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "china@2024" -Force)
+
+    - name: Run Services and Maintain Tunnel
+      if: steps.date_check.outputs.SKIP != 'true'
+      shell: pwsh
+      env:
+        CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
+      run: |
+        # 1. 启动 ngrok 隧道
+        Start-Process -FilePath "./ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
+        Start-Sleep -Seconds 20
+        
+        # 2. 获取并保存 ngrok URL
         $tunnels = Invoke-RestMethod -Method Get -Uri "http://localhost:4040/api/tunnels"
         $public_url = $tunnels.tunnels.public_url
         $current_time = Get-Date -Format "yyyyMMddHHmmss"
-        $file_name = "$current_time.txt"
-        $public_url | Out-File -FilePath "wwww/$file_name"
-        - name: Install and maintain Cloudflare Tunnel
-  if: steps.date_check.outputs.SKIP != 'true'
-  shell: pwsh
-  run: |
-    $startTime = Get-Date
-    $endTime   = $startTime.AddHours(6)
+        $public_url | Out-File -FilePath "wwww/$current_time.txt"
+        Write-Host "NGROK URL: $public_url"
 
-    Write-Host "Waiting 5 minutes after ngrok startup..."
-    Start-Sleep -Seconds 300
-
-    # 下载 cloudflared
-    if (-not (Test-Path "cloudflared.exe")) {
-      Write-Host "Downloading cloudflared..."
-      Invoke-WebRequest `
-        https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe `
-        -OutFile cloudflared.exe
-    }
-
-    while ((Get-Date) -lt $endTime) {
-      try {
-        Write-Host "Attempting to start Cloudflare Tunnel..."
-
-        # ⚠️ 你必须提前在 Secrets 里配置 CF_TUNNEL_TOKEN
-        # 使用 token 模式 → 不会和其他机器 tunnel 名冲突
-        $proc = Start-Process `
-          -FilePath ".\cloudflared.exe" `
-          -ArgumentList "tunnel run --token $env:CF_TUNNEL_TOKEN" `
-          -NoNewWindow `
-          -PassThru
-
-        Start-Sleep -Seconds 10
-
-        if (!$proc.HasExited) {
-          Write-Host "✅ Cloudflare Tunnel started successfully."
-          
-          # Tunnel 运行期间保持存活
-          while (!$proc.HasExited -and (Get-Date) -lt $endTime) {
-            Start-Sleep -Seconds 60
-          }
-
-          Write-Host "Tunnel process ended or time reached."
-          break
+        # 3. 下载并启动 Cloudflare Tunnel (作为备份)
+        if (-not (Test-Path "cloudflared.exe")) {
+          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile cloudflared.exe
         }
-        else {
-          throw "cloudflared exited immediately"
-        }
-      }
-      catch {
-        Write-Host "❌ Tunnel failed (likely conflict or auth issue)."
-        Write-Host "Retrying in 2 minutes..."
-        Start-Sleep -Seconds 120
-      }
-    }
+        
+        $startTime = Get-Date
+        $endTime   = $startTime.AddHours(6)
 
-    Write-Host "Reached maximum runtime, exiting Cloudflare Tunnel loop."
+        # 启动 Cloudflare 进程
+        $cfProc = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel run --token $env:CF_TUNNEL_TOKEN" -NoNewWindow -PassThru
 
-        while ($true) {
+        # 4. 维持循环：定期同步 OneDrive 并检查时长
+        Write-Host "Entering maintenance loop for 6 hours..."
+        while ((Get-Date) -lt $endTime) {
+          # 执行上传
           .\OneDriveUploader.exe -c auth.json -s "wwww"
-          Start-Sleep -s 60
+          
+          # 检查 Cloudflare 进程是否还在运行，不在则尝试重启
+          if ($cfProc.HasExited) {
+            Write-Host "Cloudflared exited, restarting..."
+            $cfProc = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel run --token $env:CF_TUNNEL_TOKEN" -NoNewWindow -PassThru
+          }
+          
+          Start-Sleep -Seconds 60
         }
+        
+        Write-Host "6 hours completed. Exiting."
